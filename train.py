@@ -31,7 +31,7 @@ from dvae import DVAE
 
 
 
-def resume_from_checkpoint(filename):
+def resume_from_checkpoint(device, filename, model, optim, scheduler):
         checkpoint = torch.load(filename, map_location=device, weights_only=False)
         global_step = checkpoint['step']
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -40,7 +40,7 @@ def resume_from_checkpoint(filename):
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     
         
-        logging.info(f"Resumed from checkpoint: {checkpoint_path} at step {global_step}")
+        logging.info(f"Resumed from checkpoint: {filename} at step {global_step}")
 
         return global_step
 
@@ -163,7 +163,7 @@ def train(args):
 
     # load models
     if args.resume:
-        global_step = resume_from_checkpoint(args.resume)
+        global_step = resume_from_checkpoint(device, args.resume, model, optim, scheduler)
 
     effective_steps_per_epoch = math.ceil(len(train_dl) / args.gradient_accumulation_steps)
     effective_training_steps = args.num_epochs * effective_steps_per_epoch
@@ -171,7 +171,7 @@ def train(args):
     logging.info(f"Effective batch size per device: {args.batch_size * args.gradient_accumulation_steps}")
     logging.info(f"Effective Total training steps: {effective_training_steps}")
 
-    start_epoch = global_step // len(train_dl)
+    start_epoch = global_step // effective_training_steps
 
         
     for epoch in range(start_epoch, args.num_epochs):
@@ -204,7 +204,7 @@ def train(args):
                 # LOGGING AND CHECKPOINTING
                 # =========================
                 if accelerator.sync_gradients:
-                    if not (global_step % args.save_every) and accelerator.is_main_process:
+                    if not (global_step % args.ckpt_every) and accelerator.is_main_process:
                         save_ckpt(accelerator,
                                   model,
                                   optim,
@@ -263,9 +263,8 @@ if __name__ == "__main__":
 
 
     # logging / checkpointing
-    parser.add_argument('--ckpt_every', type=int, default=100, help="Save checkpoint every N steps")
+    parser.add_argument('--ckpt_every', type=int, default=1000, help="Save checkpoint every N steps")
     parser.add_argument('--eval_every', type=int, default=100, help="Evaluate every N steps")
-    parser.add_argument('--save_every', type=int, default=100, help="Save model every N steps")
     parser.add_argument('--sample_every', type=int, default=100, help="Sample and log reconstructions every N steps")
     parser.add_argument('--ckpt_saved_dir', type=str, default='ckpt', help="Directory to save outputs")
 

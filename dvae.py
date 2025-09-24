@@ -1,11 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange, repeat
+from einops import rearrange, repeat, reduce
 
-# -------------------------------
-# Simple Downsampling Block (Paper-based)
-# -------------------------------
+
 class SimpleDownsampleBlock(nn.Module):
     def __init__(self, in_channels, out_channels, downsample_factor):
         super().__init__()
@@ -19,9 +17,7 @@ class SimpleDownsampleBlock(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
-# -------------------------------
-# Hierarchical Encoder (Minimal Paper Version)
-# -------------------------------
+
 class HierarchicalEncoder(nn.Module):
     def __init__(self, in_channels=3, latent_channels=4, downsample_factors=[8, 16]):
         super().__init__()
@@ -45,49 +41,69 @@ class HierarchicalEncoder(nn.Module):
         # Returns list: [fine_latents (8x), coarse_latents (16x)]
         return latents
 
-# -------------------------------
-# Dynamic Grained Coding (Paper Algorithm)
-# -------------------------------
-def compute_entropy_map(image_gray, patch_size=16, num_bins=256):
+def compute_entropy_map(image_gray, patch_size=16, num_bins=256, sigma=0.01):
     """
+    Optimized entropy map computation using einops and vectorized torch operations.
+    
     Paper Algorithm: Gaussian kernel density estimation + Shannon entropy
+    
+    Args:
+        image_gray: [B, H, W] grayscale image tensor
+        patch_size: Size of each patch (S in paper)
+        num_bins: Number of histogram bins for PDF estimation
+        sigma: Gaussian kernel smoothing parameter (paper uses σ = 0.01)
+    
+    Returns:
+        entropy_map: [B, H//patch_size, W//patch_size] entropy values
     """
     B, H, W = image_gray.shape
-    entropy_map = torch.zeros((B, H // patch_size, W // patch_size), device=image_gray.device)
+    device = image_gray.device
     
-    # Paper equation (2): Gaussian kernel density estimation
-    sigma = 0.01  # Paper mentions σ = 0.01
+    # Ensure dimensions are divisible by patch_size
+    H_pad = ((H + patch_size - 1) // patch_size) * patch_size
+    W_pad = ((W + patch_size - 1) // patch_size) * patch_size
     
-    for i in range(0, H, patch_size):
-        for j in range(0, W, patch_size):
-            patch = image_gray[:, i:i+patch_size, j:j+patch_size]  # S×S region
-            
-            # Flatten patch for processing
-            patch_flat = patch.flatten(1)  # [B, S²]
-            
-            for b in range(B):
-                # Create histogram bins (paper mentions uniform distribution)
-                bins = torch.linspace(0.0, 1.0, num_bins, device=patch.device)
-                
-                # Gaussian kernel density estimation (Equation 2)
-                patch_pixels = patch_flat[b]
-                pdf_values = []
-                
-                for bin_val in bins:
-                    # Paper equation (2): ρ̂_k(b_j) = (1/S²) Σ exp(-1/2 * ((x_k,i - b_j)/σ)²)
-                    gaussian_weights = torch.exp(-0.5 * ((patch_pixels - bin_val) / sigma) ** 2)
-                    pdf_val = gaussian_weights.mean()  # 1/S² * sum
-                    pdf_values.append(pdf_val)
-                
-                pdf = torch.stack(pdf_values)
-                pdf = pdf / pdf.sum()  # Normalize to probability distribution
-                
-                # Shannon entropy (Equation 3): E_k = -Σ ρ̂_k(b_j) log ρ̂_k(b_j)
-                pdf = torch.clamp(pdf, min=1e-10)  # Prevent log(0)
-                entropy = -torch.sum(pdf * torch.log2(pdf))
-                entropy_map[b, i // patch_size, j // patch_size] = entropy
+    if H_pad != H or W_pad != W:
+        image_gray = F.pad(image_gray, (0, W_pad - W, 0, H_pad - H), mode='reflect')
+        H, W = H_pad, W_pad
+    
+    # Reshape into patches using einops
+    # [B, H, W] -> [B, H//S, W//S, S, S] -> [B, H//S, W//S, S*S]
+    patches = rearrange(
+        image_gray, 
+        'b (h_patches patch_h) (w_patches patch_w) -> b h_patches w_patches (patch_h patch_w)',
+        patch_h=patch_size, 
+        patch_w=patch_size
+    )
+    
+    B, H_patches, W_patches, patch_area = patches.shape
+    
+    # Create histogram bins - uniformly distributed as mentioned in paper
+    bins = torch.linspace(0.0, 1.0, num_bins, device=device)
+    
+    # Vectorized Gaussian kernel density estimation
+    # Reshape for broadcasting: patches [B, H_p, W_p, S²] and bins [num_bins]
+    patches_expanded = patches.unsqueeze(-1)  # [B, H_p, W_p, S², 1]
+    bins_expanded = bins.view(1, 1, 1, 1, num_bins)  # [1, 1, 1, 1, num_bins]
+    
+    # Paper equation (2): ρ̂_k(b_j) = (1/S²) Σ exp(-1/2 * ((x_k,i - b_j)/σ)²)
+    gaussian_weights = torch.exp(-0.5 * ((patches_expanded - bins_expanded) / sigma) ** 2)
+    
+    # Average over patch pixels (1/S² * sum) -> [B, H_p, W_p, num_bins]
+    pdf_values = reduce(gaussian_weights, 'b h w pixels bins -> b h w bins', 'mean')
+    
+    # Normalize to ensure valid probability distribution
+    pdf_values = pdf_values / (pdf_values.sum(dim=-1, keepdim=True) + 1e-10)
+    
+    # Shannon entropy computation (Equation 3): E_k = -Σ ρ̂_k(b_j) log ρ̂_k(b_j)
+    # Add small epsilon to prevent log(0)
+    pdf_values = torch.clamp(pdf_values, min=1e-10)
+    entropy_map = -torch.sum(pdf_values * torch.log2(pdf_values), dim=-1)
     
     return entropy_map
+
+
+
 
 def assign_grain(entropy_map, grained_ratios=[0.5]):
     """
@@ -106,9 +122,7 @@ def assign_grain(entropy_map, grained_ratios=[0.5]):
     
     return grain_map
 
-# -------------------------------
-# Neighbor Copying (Paper Method)
-# -------------------------------
+
 def route_latents_paper(latents_fine, latents_coarse, grain_map):
     """
     Paper method: "neighbor copying method" for irregular latent codes
@@ -133,9 +147,7 @@ def route_latents_paper(latents_fine, latents_coarse, grain_map):
     
     return routed
 
-# -------------------------------
-# VAE Decoder (Standard Implementation)
-# -------------------------------
+
 class Decoder(nn.Module):
     def __init__(self, latent_channels=4, out_channels=3, base_channels=128):
         super().__init__()
@@ -185,9 +197,7 @@ class Decoder(nn.Module):
         out = torch.tanh(self.output_conv(h))  # [B, 3, 256, 256]
         return out
 
-# -------------------------------
-# Complete DVAE with Decoder
-# -------------------------------
+
 class DVAE(nn.Module):
     def __init__(self, downsample_factors=[8, 16], base_channels=128):
         super().__init__()
@@ -229,9 +239,7 @@ class DVAE(nn.Module):
             'entropy_map': entropy_map
         }
 
-# -------------------------------
-# VAE Loss Function
-# -------------------------------
+
 def vae_loss(x_recon, x_orig, reduction='mean'):
     """
     Simple reconstruction loss for VAE
@@ -240,9 +248,7 @@ def vae_loss(x_recon, x_orig, reduction='mean'):
     mse_loss = F.mse_loss(x_recon, x_orig, reduction=reduction)
     return mse_loss
 
-# -------------------------------
-# Test Complete DVAE
-# -------------------------------
+
 if __name__ == "__main__":
     # Create model
     model = DVAE(downsample_factors=[8, 16], base_channels=64)  # Smaller for testing
