@@ -24,23 +24,10 @@ from torch.utils.data import DataLoader, random_split
 from tqdm.auto import tqdm
 from einops import rearrange
 import logging
+from loss import create_simple_loss_function as dvae_loss
 
 
 from dvae import DVAE
-
-
-def dvae_loss(model_output, target_images):
-    """
-    Simple MSE reconstruction loss for DVAE
-    Args:
-        model_output: Dictionary containing 'reconstructed' key
-        target_images: Original input images [B, 3, H, W]
-    Returns:
-        MSE loss (scalar tensor)
-    """
-    return F.mse_loss(model_output['reconstructed'], target_images)
-
-
 
 
 
@@ -148,21 +135,21 @@ def train(args):
     )
     steps_per_epoch = len(train_dl) // args.gradient_accumulation_steps
     num_training_steps = args.num_epochs * steps_per_epoch
-    # scheduler = get_cosine_schedule_with_warmup(
-    #         optim,
-    #         num_warmup_steps=4000,
-    #         num_training_steps=num_training_steps
-    #     )
-    
-    # linear lr scheduler
-    scheduler = get_linear_schedule_with_warmup(
+    scheduler = get_cosine_schedule_with_warmup(
             optim,
             num_warmup_steps=args.warmup_steps,
             num_training_steps=num_training_steps
         )
+    
+    # linear lr scheduler
+    # scheduler = get_linear_schedule_with_warmup(
+    #         optim,
+    #         num_warmup_steps=args.warmup_steps,
+    #         num_training_steps=num_training_steps
+    #     )
 
 
-    loss_fn = dvae_loss
+    loss_fn = dvae_loss()
 
     # prepare model, optimizer, and dataloader for distributed training
     model, optim, scheduler, train_dl, val_dl = accelerator.prepare(
@@ -202,7 +189,7 @@ def train(args):
                     
                     with accelerator.autocast():
                         recon = model(images)
-                        loss = loss_fn(recon, images)
+                        loss, loss_dict = loss_fn(recon, images)
                         
                     accelerator.backward(loss)
                     
@@ -237,7 +224,10 @@ def train(args):
                     
                     # Prepare logging
                     log_dict = {
-                        "loss": loss.item(),
+                        "total_loss": loss_dict['total_loss'],
+                        "l1_loss": loss_dict['l1_loss'],
+                        "perceptual_loss": loss_dict['perceptual_loss'],
+                        "l2_loss": loss_dict['l2_loss'],
                         "lr": optim.param_groups[0]['lr']
                     }
                     
@@ -263,7 +253,7 @@ if __name__ == "__main__":
 
     # training hyperparameters
     parser.add_argument('--lr', type=float, default=1e-4, help="Learning rate")
-    parser.add_argument('--num_epochs', type=int, default=200, help="Number of training epochs")
+    parser.add_argument('--num_epochs', type=int, default=50, help="Number of training epochs")
     parser.add_argument('--warmup_steps', type=int, default=1000, help="LR warmup steps")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help="Max gradient norm for clipping")
@@ -273,10 +263,10 @@ if __name__ == "__main__":
 
 
     # logging / checkpointing
-    parser.add_argument('--ckpt_every', type=int, default=1000, help="Save checkpoint every N steps")
-    parser.add_argument('--eval_every', type=int, default=500, help="Evaluate every N steps")
-    parser.add_argument('--save_every', type=int, default=500, help="Save model every N steps")
-    parser.add_argument('--sample_every', type=int, default=500, help="Sample and log reconstructions every N steps")
+    parser.add_argument('--ckpt_every', type=int, default=100, help="Save checkpoint every N steps")
+    parser.add_argument('--eval_every', type=int, default=100, help="Evaluate every N steps")
+    parser.add_argument('--save_every', type=int, default=100, help="Save model every N steps")
+    parser.add_argument('--sample_every', type=int, default=100, help="Sample and log reconstructions every N steps")
     parser.add_argument('--ckpt_saved_dir', type=str, default='ckpt', help="Directory to save outputs")
 
     args = parser.parse_args()
