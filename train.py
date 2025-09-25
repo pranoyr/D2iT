@@ -149,6 +149,11 @@ def train(args):
     #     )
 
 
+    weight_dict = {
+        'l1': args.l1_weight,
+        'l2': args.l2_weight, 
+        'perceptual': args.perceptual_weight
+    }
     loss_fn = dvae_loss()
 
     # prepare model, optimizer, and dataloader for distributed training
@@ -189,7 +194,7 @@ def train(args):
                     
                     with accelerator.autocast():
                         recon = model(images)
-                        loss, loss_dict = loss_fn(recon, images)
+                        loss, loss_dict = loss_fn(recon, images, weights=weight_dict)
                         
                     accelerator.backward(loss)
                     
@@ -259,7 +264,10 @@ if __name__ == "__main__":
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help="Max gradient norm for clipping")
     parser.add_argument('--mixed_precision', type=str, default='fp16', choices=['no', 'fp16', 'bf16'], help="Mixed precision training mode")
 
-
+    # loss weightages
+    parser.add_argument('--l1_weight', type=float, default=0.7, help="Weight for L1 loss")
+    parser.add_argument('--l2_weight', type=float, default=0.3, help="Weight for L2 loss")
+    parser.add_argument('--perceptual_weight', type=float, default=0.1, help="Weight for perceptual loss")
 
 
     # logging / checkpointing
