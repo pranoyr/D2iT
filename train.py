@@ -116,7 +116,7 @@ def train(args):
     # set device
     device = accelerator.device
     # model
-    model = DVAE(downsample_factors=[8, 16], base_channels=128)
+    model = DVAE()
     # Train loders
     train_dl, val_dl = get_coco_loaders(
         root=args.root,
@@ -253,14 +253,14 @@ if __name__ == "__main__":
     parser.add_argument('--project_name', type=str, default='DVAE')
     parser.add_argument('--root', type=str, default='/media/pranoy/Datasets/coco-dataset/coco',help="Path to dataset")
     parser.add_argument('--resume', type=str, default=None, help="Path to checkpoint to resume from")
-    parser.add_argument('--batch_size', type=int, default=32, help="Batch size per device")
+    parser.add_argument('--batch_size', type=int, default=4, help="Batch size per device")
     parser.add_argument('--num_workers', type=int, default=4, help="Number of data loader workers")
 
     # training hyperparameters
     parser.add_argument('--lr', type=float, default=1e-4, help="Learning rate")
     parser.add_argument('--num_epochs', type=int, default=50, help="Number of training epochs")
     parser.add_argument('--warmup_steps', type=int, default=1000, help="LR warmup steps")
-    parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help="Gradient accumulation steps")
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=4, help="Gradient accumulation steps")
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help="Max gradient norm for clipping")
     parser.add_argument('--mixed_precision', type=str, default='fp16', choices=['no', 'fp16', 'bf16'], help="Mixed precision training mode")
 
