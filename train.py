@@ -267,7 +267,7 @@ if __name__ == "__main__":
     # loss weightages
     parser.add_argument('--l1_weight', type=float, default=0.7, help="Weight for L1 loss")
     parser.add_argument('--l2_weight', type=float, default=0.3, help="Weight for L2 loss")
-    parser.add_argument('--perceptual_weight', type=float, default=0.1, help="Weight for perceptual loss")
+    parser.add_argument('--perceptual_weight', type=float, default=7, help="Weight for perceptual loss")
 
 
     # logging / checkpointing

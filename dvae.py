@@ -365,37 +365,6 @@ class Decoder(nn.Module):
         return h
 
 
-# encoderconfig:
-#       target: modules.dynamic_modules.EncoderDual.DualGrainEncoder
-#       params:
-#         ch: 128
-#         ch_mult: [1,1,2,2,4]
-#         num_res_blocks: 2
-#         attn_resolutions: [16, 32]
-#         dropout: 0.0
-#         resamp_with_conv: true
-#         in_channels: 3
-#         resolution: 256
-#         z_channels: 256
-#         router_config:
-#           target: modules.dynamic_modules.RouterDual.DualGrainFeatureRouter
-#           params:
-#             num_channels: 256
-#             normalization_type: group-32
-#             gate_type: 2layer-fc-SiLu
-#     decoderconfig:
-#       target: modules.dynamic_modules.DecoderPositional.Decoder
-#       params:
-#         ch: 128
-#         in_ch: 256
-#         out_ch: 3
-#         ch_mult: [1,1,2,2]
-#         num_res_blocks: 2
-#         resolution: 256
-#         attn_resolutions: [32]
-#         latent_size: 32
-#         window_size: 2
-#         position_type: fourier+learned
 
 
 
