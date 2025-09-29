@@ -7,9 +7,11 @@ python train.py
 ```
 
 
-| Model | Dataset | Resolution | Metric  | Score ↓  |
-| ----- | ------- | ---------- | ------- | -------- |
-| DVAE  | COCO    | 256×256    | FID-10K | **0.63** |
+## Pre-trained Models
+
+| Model | Dataset | Resolution | Metric  | Score ↓  | download link |
+| ----- | ------- | ---------- | ------- | -------- |---------------|
+| DVAE  | COCO    | 256×256    | FID-10K | **0.63** |[Google Cloud](https://drive.google.com/drive/folders/19pK7bfK40FxbZLJTcx8VHX0lqLbm5ECu?usp=sharing)|
 
 
 
