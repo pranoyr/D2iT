@@ -22,9 +22,6 @@ python train.py
 Input vs Reconstructed Images
 <p align="center"> <img src="assets/dvae_reconstruction.png" alt="DVAE Reconstructions" width="80%"> </p>
 
-Row 1: Input images
-Row 2: Reconstructed images from DVAE
-
 
 
 ## Citation
