@@ -9,9 +9,9 @@ python train.py
 
 ## Pre-trained Models
 
-| Model | Dataset | Resolution | Metric  | Score ↓  | download link |
+| Model | Dataset | Resolution | Metric  | FID Score   | Download link |
 | ----- | ------- | ---------- | ------- | -------- |---------------|
-| DVAE  | COCO    | 256×256    | FID-10K | **0.63** |[Google Cloud](https://drive.google.com/drive/folders/19pK7bfK40FxbZLJTcx8VHX0lqLbm5ECu?usp=sharing)|
+| DVAE  | COCO    | 256×256    | FID-10K | **0.63** |[Google Cloud](https://drive.google.com/file/d/1rqhdDafRSvOIzN2XOZeiLlLNP1iNLrUZ/view?usp=sharing)|
 
 
 
