@@ -5,8 +5,6 @@
 </p>
 
 
-## Basic Training
-
 ```bash
 python train.py 
 ```
@@ -19,7 +17,8 @@ python train.py
 | DVAE  | COCO    | 256×256    | FID-10K | **0.63** |[Google Cloud](https://drive.google.com/file/d/1rqhdDafRSvOIzN2XOZeiLlLNP1iNLrUZ/view?usp=sharing)|
 
 
-Results
+### Results
+
 Input vs Reconstructed Images
 <p align="center"> <img src="assets/dvae_reconstruction.png" alt="DVAE Reconstructions" width="80%"> </p>
 
