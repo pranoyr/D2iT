@@ -26,7 +26,7 @@ class LPIPSPerceptualLoss(nn.Module):
             return loss.mean()
 
 
-def simple_dvae_loss(model_output, target_images, perceptual_loss_fn, weights=None):
+def dvae_loss(model_output, target_images, perceptual_loss_fn, weights=None):
     """
     Simple DVAE loss: L1 + L2 + Perceptual
     
@@ -72,12 +72,12 @@ def simple_dvae_loss(model_output, target_images, perceptual_loss_fn, weights=No
 
 
 # Usage in your training code:
-def create_simple_loss_function():
+def create_dvae_loss():
     """Create the simple loss function"""
     perceptual_loss_fn = LPIPSPerceptualLoss(net='vgg').cuda()
     
     def loss_fn(model_output, target_images, weights=None):
-        return simple_dvae_loss(
+        return dvae_loss(
             model_output, 
             target_images, 
             perceptual_loss_fn,

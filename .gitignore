@@ -1,3 +1,4 @@
 *.pth
 /wandb
 *.pyc
+/exps

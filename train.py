@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader, random_split
 from tqdm.auto import tqdm
 from einops import rearrange
 import logging
-from loss import create_simple_loss_function as dvae_loss
+from loss import create_dvae_loss as dvae_loss
 
 
 from dvae import DVAE
@@ -94,6 +94,42 @@ def sample_images(model, val_dl, accelerator, device, global_step):
     
 
 
+@torch.no_grad()
+def validate(model, val_dl, loss_fn, weight_dict, accelerator, device, global_step):
+    model.eval()
+
+    total_loss, total_l1, total_l2, total_perc = 0, 0, 0, 0
+    num_batches = 0
+
+    for batch in tqdm(val_dl, desc="Validating", disable=not accelerator.is_main_process):
+        images = batch.to(device)
+        with accelerator.autocast():
+            recon = model(images)
+            loss, loss_dict = loss_fn(recon, images, weights=weight_dict)
+
+        total_loss += loss_dict['total_loss']
+        total_l1 += loss_dict['l1_loss']
+        total_l2 += loss_dict['l2_loss']
+        total_perc += loss_dict['perceptual_loss']
+        num_batches += 1
+
+    # Compute averages
+    avg_loss = total_loss / num_batches
+    avg_l1 = total_l1 / num_batches
+    avg_l2 = total_l2 / num_batches
+    avg_perc = total_perc / num_batches
+
+    if accelerator.is_main_process:
+        accelerator.log({
+            'val_total_loss': avg_loss,
+            'val_l1_loss': avg_l1,
+            'val_l2_loss': avg_l2,
+            'val_perceptual_loss': avg_perc,
+        }, step=global_step)
+
+    model.train()
+
+
 
 def train(args):
 
@@ -133,21 +169,15 @@ def train(args):
         betas=(0.0, 0.99),
         weight_decay=0.0
     )
-    steps_per_epoch = len(train_dl) // args.gradient_accumulation_steps
+    steps_per_epoch = math.ceil(len(train_dl) / args.gradient_accumulation_steps)
     num_training_steps = args.num_epochs * steps_per_epoch
+   
     scheduler = get_cosine_schedule_with_warmup(
             optim,
             num_warmup_steps=args.warmup_steps,
             num_training_steps=num_training_steps
         )
     
-    # linear lr scheduler
-    # scheduler = get_linear_schedule_with_warmup(
-    #         optim,
-    #         num_warmup_steps=args.warmup_steps,
-    #         num_training_steps=num_training_steps
-    #     )
-
 
     weight_dict = {
         'l1': args.l1_weight,
@@ -174,11 +204,12 @@ def train(args):
     effective_training_steps = args.num_epochs * effective_steps_per_epoch
 
     logging.info(f"Effective batch size per device: {args.batch_size * args.gradient_accumulation_steps}")
+    logging.info(f"Effective steps per epoch: {effective_steps_per_epoch}")
     logging.info(f"Effective Total training steps: {effective_training_steps}")
 
     start_epoch = global_step // effective_training_steps
 
-        
+    model.train()
     for epoch in range(start_epoch, args.num_epochs):
         with tqdm(train_dl, dynamic_ncols=True, disable=not accelerator.is_main_process) as train_dl:
             for batch in train_dl:
@@ -226,6 +257,17 @@ def train(args):
                             global_step,
                             
                         )
+
+                    if not (global_step % args.eval_every):
+                        validate(
+                            model,
+                            val_dl,
+                            loss_fn,
+                            weight_dict,
+                            accelerator,
+                            device,
+                            global_step
+                        )
                     
                     # Prepare logging
                     log_dict = {
@@ -258,7 +300,7 @@ if __name__ == "__main__":
 
     # training hyperparameters
     parser.add_argument('--lr', type=float, default=1e-4, help="Learning rate")
-    parser.add_argument('--num_epochs', type=int, default=50, help="Number of training epochs")
+    parser.add_argument('--num_epochs', type=int, default=20, help="Number of training epochs")
     parser.add_argument('--warmup_steps', type=int, default=1000, help="LR warmup steps")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=4, help="Gradient accumulation steps")
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help="Max gradient norm for clipping")
@@ -272,7 +314,7 @@ if __name__ == "__main__":
 
     # logging / checkpointing
     parser.add_argument('--ckpt_every', type=int, default=1000, help="Save checkpoint every N steps")
-    parser.add_argument('--eval_every', type=int, default=100, help="Evaluate every N steps")
+    parser.add_argument('--eval_every', type=int, default=2000, help="Evaluate every N steps")
     parser.add_argument('--sample_every', type=int, default=100, help="Sample and log reconstructions every N steps")
     parser.add_argument('--ckpt_saved_dir', type=str, default='ckpt', help="Directory to save outputs")
 
