@@ -15,7 +15,7 @@ python train.py
 | Model | Dataset | Resolution | Metric  | FID Score   | Download link |
 | ----- | ------- | ---------- | ------- | -------- |---------------|
 | DVAE  | COCO    | 256×256    | FID-10K | **0.63** |[Google Cloud](https://drive.google.com/file/d/1rqhdDafRSvOIzN2XOZeiLlLNP1iNLrUZ/view?usp=sharing)|
-
+| [Training Logs (Weights & Biases)](https://wandb.ai/pranoy/DVAE/runs/pkozdc64?nw=nwuserpranoy) |
 
 ### Results
 
