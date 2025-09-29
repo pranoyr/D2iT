@@ -28,7 +28,7 @@ Input vs Reconstructed Images
 ### Training Logs
 
 You can view the detailed training process and tracked metrics here:
-🔗 W&B Logs: DVAE Training Run
+🔗 W&B Logs: [DVAE Training Run](https://wandb.ai/pranoy/DVAE/runs/pkozdc64?nw=nwuserpranoy)
 
 
 ## Citation
