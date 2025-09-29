@@ -7,6 +7,12 @@ python train.py
 ```
 
 
+| Model | Dataset | Resolution | Metric  | Score ↓  |
+| ----- | ------- | ---------- | ------- | -------- |
+| DVAE  | COCO    | 256×256    | FID-10K | **0.63** |
+
+
+
 ## Citation
 
 ```bibtex
