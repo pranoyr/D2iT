@@ -11,6 +11,14 @@ from torch.utils.data import DataLoader
 import logging
 
 
+
+import os
+import pandas as pd
+from PIL import Image
+from torch.utils.data import Dataset, DataLoader
+import torchvision.transforms as transforms
+
+
 def pair(x):
     """Helper function to create tuple pairs"""
     return x, x
@@ -254,3 +262,146 @@ class CoCo(CocoDataset):
             ann = "Caption unavailable"
             
         return img, ann
+
+
+
+
+class ImageNetDataset(Dataset):
+    def __init__(self, root_dir, is_train=True):
+        """
+        Simplified ImageNet loader - only returns integer labels
+        
+        Args:
+            root_dir: Path to train or val folder with synset subfolders
+            csv_file: Path to LOC_train_solution.csv or LOC_val_solution.csv
+            transform: Image transforms
+        """
+        self.root_dir = root_dir
+        self.transform = get_transforms(resolution=256, is_train=is_train)
+
+        csv_file = os.path.join(os.path.dirname(root_dir),
+                                'LOC_train_solution.csv' if is_train else 'LOC_val_solution.csv')
+        
+        # Load CSV
+        self.data = pd.read_csv(csv_file)
+        self.data.columns = ["ImageId", "Label"]
+        
+        # Create synset to integer mapping (sorted alphabetically for consistency)
+        all_synsets = sorted(set(self.data["Label"].str.split(" ").str[0]))
+        self.synset_to_idx = {synset: idx for idx, synset in enumerate(all_synsets)}
+        
+        print(f"Loaded {len(self.data)} images with {len(all_synsets)} classes")
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img_name = self.data.iloc[idx, 0] + ".JPEG"
+        
+        # Extract synset (first word before space)
+        label_field = str(self.data.iloc[idx, 1]).strip()
+        label_synset = label_field.split(" ")[0]
+        
+        # Convert to integer label
+        label = self.synset_to_idx[label_synset]
+        
+        # Load image from synset subfolder
+        img_path = os.path.join(self.root_dir, label_synset, img_name)
+        image = Image.open(img_path).convert("RGB")
+        
+        if self.transform:
+            image = self.transform(image)
+            
+        return image, label
+
+
+
+
+def get_imagenet_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True):
+    """
+    Create ImageNet data loaders for training and validation
+    
+    Args:
+        train_dataset: Training dataset
+        val_dataset: Validation dataset
+        batch_size: Batch size for data loaders
+        num_workers: Number of worker processes for data loading
+        pin_memory: Whether to pin memory for faster GPU transfer
+
+    Returns:
+        tuple: (train_loader, val_loader)
+    """
+
+
+    DatasetClass =  ImageNetDataset 
+
+    train_ds = DatasetClass(
+        root_dir=root_dir,
+        is_train=True
+    )
+
+
+    val_ds = DatasetClass(
+        root_dir=root_dir,
+        is_train=False
+    )
+
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=batch_size,  # Paper uses 256
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+        persistent_workers=num_workers > 0
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+        persistent_workers=num_workers > 0
+    )
+
+
+    return train_loader, val_loader
+
+
+
+# # Create datasets
+# train_dataset = ImageNetDataset(
+#     root_dir="/media/pranoy/Datasets/ILSVRC/Data/CLS-LOC/train",
+#     csv_file="/media/pranoy/Datasets/ILSVRC/LOC_train_solution.csv",
+#     transform=train_transform
+# )
+
+# val_dataset = ImageNetDataset(
+#     root_dir="/media/pranoy/Datasets/ILSVRC/Data/CLS-LOC/val",
+#     csv_file="/media/pranoy/Datasets/ILSVRC/LOC_val_solution.csv",
+#     transform=val_transform
+# )
+
+
+
+
+# # Create dataloaders
+# train_loader = DataLoader(
+#     train_dataset, 
+#     batch_size=1,  # Paper uses 256
+#     shuffle=True,
+#     num_workers=0,
+#     pin_memory=True,
+#     drop_last=True
+# )
+
+# val_loader = DataLoader(
+#     val_dataset,
+#     batch_size=1,
+#     shuffle=False,
+#     num_workers=0,
+#     pin_memory=True
+# )
+

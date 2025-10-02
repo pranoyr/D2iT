@@ -157,7 +157,6 @@ def train(args):
     train_dl, val_dl = get_coco_loaders(
         root=args.root,
         batch_size=args.batch_size,
-        # shuffle=True,
         num_workers=args.num_workers
     )
 
@@ -165,7 +164,7 @@ def train(args):
     # training parameters
     optim = torch.optim.Adam(
         model.parameters(),
-        lr=1e-4,
+        lr=args.lr,
         betas=(0.0, 0.99),
         weight_decay=0.0
     )
