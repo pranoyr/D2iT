@@ -347,7 +347,7 @@ class DVAE(nn.Module):
             resamp_with_conv=True,
             in_channels=3,
             resolution=256,
-            z_channels=256
+            z_channels=4
         )
 
 
@@ -361,7 +361,7 @@ class DVAE(nn.Module):
             attn_resolutions=(32,),
             dropout=0.0,
             resolution=256,
-            z_channels=256,
+            z_channels=4,
         )
 
 

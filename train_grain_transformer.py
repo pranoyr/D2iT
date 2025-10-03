@@ -10,8 +10,6 @@ import logging
 import math
 
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
-from d2it.dataset import get_coco_loaders
-
 import os
 import torch
 import random
@@ -24,10 +22,12 @@ from torch.utils.data import DataLoader, random_split
 from tqdm.auto import tqdm
 from einops import rearrange
 import logging
-from loss import create_dvae_loss as dvae_loss
 
 
-from dvae import DVAE
+from d2it.dataset import get_imagenet_loaders
+from d2it.loss import create_grain_loss as grain_loss
+from d2it.dvae import GrainTransformer
+
 
 
 
@@ -152,9 +152,9 @@ def train(args):
     # set device
     device = accelerator.device
     # model
-    model = DVAE()
+    model = GrainTransformer()
     # Train loders
-    train_dl, val_dl = get_coco_loaders(
+    train_dl, val_dl = get_imagenet_loaders(
         root=args.root,
         batch_size=args.batch_size,
         num_workers=args.num_workers
@@ -183,7 +183,7 @@ def train(args):
         'l2': args.l2_weight, 
         'perceptual': args.perceptual_weight
     }
-    loss_fn = dvae_loss()
+    loss_fn = grain_loss()
 
     # prepare model, optimizer, and dataloader for distributed training
     model, optim, scheduler, train_dl, val_dl = accelerator.prepare(
