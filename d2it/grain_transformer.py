@@ -269,10 +269,16 @@ if __name__ == "__main__":
 
 
     x = rearrange(x, 'b n c -> (b n) c')
-    gt = torch.randn(2, 16, 16)
+    gt = torch.randint(0, 2, (2, 16, 16)) # (b, h, w)
 
 
     gt = rearrange(gt, 'b h w -> (b h w)')
+
+
+    # cross entropy loss
+    loss = nn.CrossEntropyLoss()
+    l = loss(x, gt)
+    print(l) # tensor(2.3030, grad_fn=<NllLossBackward
 
 
     print(x.shape, gt.shape) # torch.Size([512, 4]) torch.Size([512, 4])

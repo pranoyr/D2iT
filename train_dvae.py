@@ -6,6 +6,7 @@ from torchvision.utils import make_grid, save_image
 import wandb
 from tqdm import tqdm
 # import constant_learnign rate swith warm up
+from torch.optim.lr_scheduler import CyclicLR
 import logging
 import math
 
@@ -29,6 +30,29 @@ from d2it.loss import create_dvae_loss as dvae_loss
 from d2it.dvae import DVAE
 
 
+def log_grain_balance_wandb(accelerator, grain_map, step):
+    """
+    Log grain map balance to Weights & Biases
+    
+    Args:
+        grain_map: Tensor of shape (B, H, W) with values 0 or 1
+        step: Current training step
+    """
+    with torch.no_grad():
+        fine_ratio = (grain_map == 1).float().mean().item()
+        coarse_ratio = (grain_map == 0).float().mean().item()
+        balance_deviation = abs(fine_ratio - 0.5)
+        
+        # Log to wandb
+        if accelerator.is_main_process:
+            wandb.log({
+                "grain_fine_ratio": fine_ratio,
+                "grain_coarse_ratio": coarse_ratio,
+                "grain_balance_deviation": balance_deviation
+            }, step=step)
+        
+    
+
 
 
 def resume_from_checkpoint(device, filename, model, optim, scheduler):
@@ -36,8 +60,9 @@ def resume_from_checkpoint(device, filename, model, optim, scheduler):
         global_step = checkpoint['step']
         model.load_state_dict(checkpoint['model_state_dict'])
         optim.load_state_dict(checkpoint['optimizer_state_dict'])
-    
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+        if scheduler is not None:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     
         
         logging.info(f"Resumed from checkpoint: {filename} at step {global_step}")
@@ -50,7 +75,7 @@ def save_ckpt(accelerator, model, optim, scheduler, global_step, filename):
             'step': global_step,
             'model_state_dict': accelerator.get_state_dict(model),
             'optimizer_state_dict': optim.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None
         }
     accelerator.save(checkpoint, filename)
     logging.info("Saving checkpoint: %s ...", filename)
@@ -176,7 +201,8 @@ def train(args):
             num_warmup_steps=args.warmup_steps,
             num_training_steps=num_training_steps
         )
-    
+
+
 
     weight_dict = {
         'l1': args.l1_weight,
@@ -232,7 +258,8 @@ def train(args):
                         accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                     
                     optim.step()	
-                    scheduler.step()
+                    if scheduler is not None:
+                        scheduler.step()
 
             
                 # =========================
@@ -276,6 +303,11 @@ def train(args):
                         "l2_loss": loss_dict['l2_loss'],
                         "lr": optim.param_groups[0]['lr']
                     }
+
+
+                    # log grain balance
+                    grain_map = recon['grain_map']  # Assuming shape (B, H, W)
+                    log_grain_balance_wandb(accelerator, grain_map, global_step)
                     
                     
                     accelerator.log(log_dict, step=global_step)

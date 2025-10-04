@@ -59,6 +59,8 @@ class DualGrainEncoder(pl.LightningModule):
         self.mid_coarse.attn_1 = AttnBlock(block_in)
         self.mid_coarse.block_2 = ResnetBlock(in_channels=block_in, out_channels=block_in, temb_channels=self.temb_ch, dropout=dropout)
 
+
+
         # end for the coarse grain
         self.norm_out_coarse = Normalize(block_in)
         self.conv_out_coarse = torch.nn.Conv2d(block_in, z_channels, kernel_size=3, stride=1, padding=1)
@@ -69,6 +71,7 @@ class DualGrainEncoder(pl.LightningModule):
         self.mid_fine.block_1 = ResnetBlock(in_channels=block_in_finegrain, out_channels=block_in_finegrain, temb_channels=self.temb_ch, dropout=dropout)
         self.mid_fine.attn_1 = AttnBlock(block_in_finegrain)
         self.mid_fine.block_2 = ResnetBlock(in_channels=block_in_finegrain, out_channels=block_in_finegrain, temb_channels=self.temb_ch, dropout=dropout)
+
 
         # end for the fine grain
         self.norm_out_fine = Normalize(block_in_finegrain)
@@ -100,6 +103,11 @@ class DualGrainEncoder(pl.LightningModule):
         h_coarse = self.mid_coarse.attn_1(h_coarse)
         h_coarse = self.mid_coarse.block_2(h_coarse, temb)
 
+        # # Progressive compression for coarse
+        # h_coarse = self.norm_out_coarse(h_coarse)
+        # h_coarse = nonlinearity(h_coarse)
+        # h_coarse = self.proj_coarse(h_coarse)
+
         # end for the h_coarse
         h_coarse = self.norm_out_coarse(h_coarse)
         h_coarse = nonlinearity(h_coarse)
@@ -109,6 +117,12 @@ class DualGrainEncoder(pl.LightningModule):
         h_fine = self.mid_fine.block_1(h_fine, temb)
         h_fine = self.mid_fine.attn_1(h_fine)
         h_fine = self.mid_fine.block_2(h_fine, temb)
+
+        # # Progressive compression for fine
+        # h_fine = self.norm_out_fine(h_fine)
+        # h_fine = nonlinearity(h_fine)
+        # h_fine = self.proj_fine(h_fine)
+
 
         # end for the h_fine
         h_fine = self.norm_out_fine(h_fine)
@@ -347,7 +361,7 @@ class DVAE(nn.Module):
             resamp_with_conv=True,
             in_channels=3,
             resolution=256,
-            z_channels=4
+            z_channels=16
         )
 
 
@@ -361,7 +375,7 @@ class DVAE(nn.Module):
             attn_resolutions=(32,),
             dropout=0.0,
             resolution=256,
-            z_channels=4,
+            z_channels=16,
         )
 
 
@@ -426,6 +440,8 @@ if __name__ == "__main__":
     # Test encoding only
     with torch.no_grad():
         latents, grain_map, entropy_map = model.encode(x)
+
+    exit()
         
     print("\nEncoding Results:")
     print("Latents shape:", latents.shape)           # Should be [2, 4, 32, 32]
