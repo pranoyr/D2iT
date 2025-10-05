@@ -4,8 +4,8 @@ from scipy import linalg
 from torchvision.models import inception_v3
 from torch.nn.functional import adaptive_avg_pool2d
 import argparse
-from dataset import get_coco_loaders
-from dvae import DVAE
+from d2it.dataset import get_coco_loaders
+from d2it.dvae import DVAE
 from tqdm.auto import tqdm
 import torch.nn.functional as F
 
@@ -103,7 +103,7 @@ if __name__ == "__main__":
     # Prepare dataloader
     _, val_dl = get_coco_loaders(
         root=args.root,
-        batch_size=32,
+        batch_size=1,
         resolution=256,
         num_workers=4,
         max_val_examples=args.num_samples

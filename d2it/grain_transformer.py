@@ -263,6 +263,11 @@ def DiT_S_2(**kwargs):
 
 if __name__ == "__main__":
     model = DiT_S_2()
+
+    # number of params
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Number of params: {n_params/1e6:.2f}M") # Number of params: 23.56M
+
     c = torch.randint(0, 1000, (2,))
     x = model(c)
     print(x.shape) # torch.Size([2, 256, 2])
