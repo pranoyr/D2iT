@@ -8,7 +8,14 @@ from PIL import Image
 from pycocotools.coco import COCO
 from torchvision import transforms as T
 from torch.utils.data import DataLoader
+import pickle as pkl
 import logging
+
+
+import os
+from PIL import Image
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
 
 
 
@@ -267,7 +274,7 @@ class CoCo(CocoDataset):
 
 
 class ImageNetDataset(Dataset):
-    def __init__(self, root_dir, is_train=True):
+    def __init__(self, root_dir, transform=None, is_train=True):
         """
         Simplified ImageNet loader - only returns integer labels
         
@@ -277,13 +284,19 @@ class ImageNetDataset(Dataset):
             transform: Image transforms
         """
         self.root_dir = root_dir
-        self.transform = get_transforms(resolution=256, is_train=is_train)
+        if transform is not None:
+            self.transform = transform
+            print("Using custom transforms")
+        else:
+            self.transform = get_transforms(resolution=256, is_train=is_train)
 
-        csv_file = os.path.join(os.path.dirname(root_dir),
+        self.is_train = is_train
+
+        csv_file = os.path.join(root_dir,
                                 'LOC_train_solution.csv' if is_train else 'LOC_val_solution.csv')
         
         # Load CSV
-        self.data = pd.read_csv(csv_file)
+        self.data = pd.read_csv(csv_file) 
         self.data.columns = ["ImageId", "Label"]
         
         # Create synset to integer mapping (sorted alphabetically for consistency)
@@ -296,7 +309,9 @@ class ImageNetDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = self.data.iloc[idx, 0] + ".JPEG"
+        # img_name = self.data.iloc[idx, 0] + ".JPEG"
+
+        img_name = str(self.data.iloc[idx, 0]).strip() + ".JPEG"
         
         # Extract synset (first word before space)
         label_field = str(self.data.iloc[idx, 1]).strip()
@@ -306,7 +321,8 @@ class ImageNetDataset(Dataset):
         label = self.synset_to_idx[label_synset]
         
         # Load image from synset subfolder
-        img_path = os.path.join(self.root_dir, label_synset, img_name)
+        is_train = "train" if self.is_train else "val"
+        img_path = os.path.join(self.root_dir, "Data/CLS-LOC", is_train,  label_synset, img_name)
         image = Image.open(img_path).convert("RGB")
         
         if self.transform:
@@ -317,7 +333,7 @@ class ImageNetDataset(Dataset):
 
 
 
-def get_imagenet_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True):
+def get_imagenet_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True, transform=None):
     """
     Create ImageNet data loaders for training and validation
     
@@ -337,17 +353,19 @@ def get_imagenet_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True)
 
     train_ds = DatasetClass(
         root_dir=root_dir,
+        transform=transform,
         is_train=True
     )
 
 
     val_ds = DatasetClass(
         root_dir=root_dir,
+        transform=transform,
         is_train=False
     )
 
     train_loader = DataLoader(
-        train_dataset, 
+        train_ds, 
         batch_size=batch_size,  # Paper uses 256
         shuffle=True,
         num_workers=num_workers,
@@ -357,7 +375,7 @@ def get_imagenet_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True)
     )
 
     val_loader = DataLoader(
-        val_dataset,
+        val_ds,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
@@ -366,8 +384,77 @@ def get_imagenet_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True)
         persistent_workers=num_workers > 0
     )
 
-
     return train_loader, val_loader
+
+
+
+
+class ImageFolderDataset(Dataset):
+    def __init__(self, root_dir, transform=None, extensions=(".jpg", ".png", ".jpeg",".pkl")):
+        """
+        Args:
+            root_dir (str): Path to the root image folder.
+            transform (callable, optional): Transform to apply to each image.
+            extensions (tuple): Allowed file extensions.
+        """
+        self.root_dir = root_dir
+        self.transform = transform
+        self.extensions = extensions
+
+        # Collect all image file paths recursively
+        self.image_paths = [
+            os.path.join(root, file)
+            for root, _, files in os.walk(root_dir)
+            for file in files
+            if file.lower().endswith(extensions)
+        ]
+
+        if not self.image_paths:
+            raise RuntimeError(f"No images found in {root_dir} with extensions {extensions}")
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        path = self.image_paths[idx]
+        # load grain map from pkl
+        if path.lower().endswith(".pkl"):
+            with open(path, 'rb') as f:
+                pkl_file  = pkl.load(f) 
+        grain_map = pkl_file['grain_map']
+        label = pkl_file['label']
+        labels = torch.tensor(label)
+        # convert to long int
+        return torch.tensor(grain_map).long(), label
+
+
+
+def get_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True):
+    """Wrapper to get ImageNet loaders for backward compatibility"""
+    
+    # dataset loader
+    train_ds = ImageFolderDataset(
+        root_dir=root_dir)
+
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        drop_last=True,
+        persistent_workers=num_workers > 0
+    )
+    
+    return train_dl, None
+
+
+# train_dl = get_loaders("/media/pranoy/Datasets/ILSVRC/grain_maps", batch_size=4, num_workers=2)
+
+# for grain_map, label in train_dl:
+#     print(grain_map.shape, label)
+#     break
+
 
 
 

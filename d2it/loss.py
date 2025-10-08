@@ -3,6 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 import lpips
+from einops import rearrange
+
+
 
 class LPIPSPerceptualLoss(nn.Module):
     """LPIPS-based perceptual loss"""
@@ -84,3 +87,13 @@ def create_dvae_loss():
             weights=weights
         )
     return loss_fn
+
+def ce_loss(logits, targets):
+
+    # Flatten logits and targets
+    targets = rearrange(targets, 'b h w -> (b h w)')
+    logits = rearrange(logits, 'b n c -> (b n) c')
+
+
+    """Cross-entropy loss for classification tasks"""
+    return F.cross_entropy(logits, targets)

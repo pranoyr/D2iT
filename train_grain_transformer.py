@@ -1,4 +1,4 @@
-import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,7 +9,7 @@ from tqdm import tqdm
 import logging
 import math
 
-from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
+from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 import os
 import torch
 import random
@@ -24,9 +24,12 @@ from einops import rearrange
 import logging
 
 
-from d2it.dataset import get_imagenet_loaders
-from d2it.loss import create_grain_loss as grain_loss
-from d2it.dvae import GrainTransformer
+
+
+
+from d2it.dataset import get_loaders 
+from d2it.loss import ce_loss as loss_fn 
+from d2it.grain_transformer import DiT_S_2
 
 
 
@@ -152,10 +155,10 @@ def train(args):
     # set device
     device = accelerator.device
     # model
-    model = GrainTransformer()
+    model = DiT_S_2()
     # Train loders
-    train_dl, val_dl = get_imagenet_loaders(
-        root=args.root,
+    train_dl, val_dl = get_loaders(
+        root_dir=args.root,
         batch_size=args.batch_size,
         num_workers=args.num_workers
     )
@@ -171,19 +174,18 @@ def train(args):
     steps_per_epoch = math.ceil(len(train_dl) / args.gradient_accumulation_steps)
     num_training_steps = args.num_epochs * steps_per_epoch
    
-    scheduler = get_cosine_schedule_with_warmup(
-            optim,
-            num_warmup_steps=args.warmup_steps,
-            num_training_steps=num_training_steps
-        )
-    
+    # scheduler = get_cosine_schedule_with_warmup(
+    #         optim,
+    #         num_warmup_steps=args.warmup_steps,
+    #         num_training_steps=num_training_steps
+    #     )
 
-    weight_dict = {
-        'l1': args.l1_weight,
-        'l2': args.l2_weight, 
-        'perceptual': args.perceptual_weight
-    }
-    loss_fn = grain_loss()
+
+    scheduler = get_constant_schedule_with_warmup(
+            optim,
+            num_warmup_steps=args.warmup_steps
+        )
+      
 
     # prepare model, optimizer, and dataloader for distributed training
     model, optim, scheduler, train_dl, val_dl = accelerator.prepare(
@@ -212,9 +214,8 @@ def train(args):
     for epoch in range(start_epoch, args.num_epochs):
         with tqdm(train_dl, dynamic_ncols=True, disable=not accelerator.is_main_process) as train_dl:
             for batch in train_dl:
-                images = batch
-                images = images.to(device)
-            
+                grain_map, labels = batch
+
                 # =========================
                 # GENERATOR TRAINING STEP
                 # =========================
@@ -223,8 +224,8 @@ def train(args):
                     optim.zero_grad(set_to_none=True)
                     
                     with accelerator.autocast():
-                        recon = model(images)
-                        loss, loss_dict = loss_fn(recon, images, weights=weight_dict)
+                        preds = model(labels)
+                        loss = loss_fn(preds, grain_map)
                         
                     accelerator.backward(loss)
                     
@@ -247,33 +248,20 @@ def train(args):
                                   global_step,
                                   os.path.join(args.ckpt_saved_dir, f'{wandb.run.name}-step-{global_step}.pth'))
                     
-                    if not (global_step % args.sample_every):
-                        sample_images(
-                            model,
-                            val_dl,
-                            accelerator,
-                            device,
-                            global_step,
-                            
-                        )
 
-                    if not (global_step % args.eval_every):
-                        validate(
-                            model,
-                            val_dl,
-                            loss_fn,
-                            weight_dict,
-                            accelerator,
-                            device,
-                            global_step
-                        )
+                    # if not (global_step % args.eval_every):
+                    #     validate(
+                    #         model,
+                    #         val_dl,
+                    #         loss_fn,
+                    #         accelerator,
+                    #         device,
+                    #         global_step
+                    #     )
                     
                     # Prepare logging
                     log_dict = {
-                        "total_loss": loss_dict['total_loss'],
-                        "l1_loss": loss_dict['l1_loss'],
-                        "perceptual_loss": loss_dict['perceptual_loss'],
-                        "l2_loss": loss_dict['l2_loss'],
+                        "train_loss": loss.item(), 
                         "lr": optim.param_groups[0]['lr']
                     }
                     
@@ -291,31 +279,25 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # project / dataset
-    parser.add_argument('--project_name', type=str, default='DVAE')
-    parser.add_argument('--root', type=str, default='/media/pranoy/Datasets/coco-dataset/coco',help="Path to dataset")
+    parser.add_argument('--project_name', type=str, default='Grain Transformer')
+    parser.add_argument('--root', type=str, default='/media/pranoy/Datasets/ILSVRC/grain_maps',help="Path to dataset")
     parser.add_argument('--resume', type=str, default=None, help="Path to checkpoint to resume from")
-    parser.add_argument('--batch_size', type=int, default=4, help="Batch size per device")
+    parser.add_argument('--batch_size', type=int, default=32, help="Batch size per device")
     parser.add_argument('--num_workers', type=int, default=4, help="Number of data loader workers")
 
     # training hyperparameters
-    parser.add_argument('--lr', type=float, default=1e-4, help="Learning rate")
-    parser.add_argument('--num_epochs', type=int, default=20, help="Number of training epochs")
+    parser.add_argument('--lr', type=float, default=1e-3  , help="Learning rate")
+    parser.add_argument('--num_epochs', type=int, default=10, help="Number of training epochs")
     parser.add_argument('--warmup_steps', type=int, default=1000, help="LR warmup steps")
-    parser.add_argument('--gradient_accumulation_steps', type=int, default=4, help="Gradient accumulation steps")
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help="Max gradient norm for clipping")
     parser.add_argument('--mixed_precision', type=str, default='fp16', choices=['no', 'fp16', 'bf16'], help="Mixed precision training mode")
 
-    # loss weightages
-    parser.add_argument('--l1_weight', type=float, default=0.7, help="Weight for L1 loss")
-    parser.add_argument('--l2_weight', type=float, default=0.3, help="Weight for L2 loss")
-    parser.add_argument('--perceptual_weight', type=float, default=7, help="Weight for perceptual loss")
-
 
     # logging / checkpointing
-    parser.add_argument('--ckpt_every', type=int, default=1000, help="Save checkpoint every N steps")
+    parser.add_argument('--ckpt_every', type=int, default=10000, help="Save checkpoint every N steps")
     parser.add_argument('--eval_every', type=int, default=2000, help="Evaluate every N steps")
-    parser.add_argument('--sample_every', type=int, default=100, help="Sample and log reconstructions every N steps")
-    parser.add_argument('--ckpt_saved_dir', type=str, default='ckpt', help="Directory to save outputs")
+    parser.add_argument('--ckpt_saved_dir', type=str, default='ckpt/d_grain_transformer', help="Directory to save outputs")
 
     args = parser.parse_args()
 

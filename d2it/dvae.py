@@ -441,7 +441,6 @@ if __name__ == "__main__":
     with torch.no_grad():
         latents, grain_map, entropy_map = model.encode(x)
 
-    exit()
         
     print("\nEncoding Results:")
     print("Latents shape:", latents.shape)           # Should be [2, 4, 32, 32]

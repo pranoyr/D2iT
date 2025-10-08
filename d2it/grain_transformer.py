@@ -45,9 +45,9 @@ class LabelEmbedder(nn.Module):
         return labels
 
     def forward(self, labels, train, force_drop_ids=None):
-        use_dropout = self.dropout_prob > 0
-        if (train and use_dropout) or (force_drop_ids is not None):
-            labels = self.token_drop(labels, force_drop_ids)
+        # use_dropout = self.dropout_prob > 0
+        # if (train and use_dropout) or (force_drop_ids is not None):
+        #     labels = self.token_drop(labels, force_drop_ids)
         embeddings = self.embedding_table(labels)
         return embeddings
 
@@ -192,8 +192,12 @@ class DiT(nn.Module):
         """
         x = repeat(self.spatial_tokens, '1 n d -> b n d', b=y.shape[0])  # (N, T, D)
         x = x + self.pos_embed  # (N, T, D)
-      
+        # covnert yo to long int
+       
+    
         c = self.y_embedder(y, self.training)    # (N, D)
+
+    
         for block in self.blocks:
             x = block(x, c)                      # (N, T, D)
 

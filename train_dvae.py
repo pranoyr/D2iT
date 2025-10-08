@@ -347,7 +347,7 @@ if __name__ == "__main__":
     parser.add_argument('--ckpt_every', type=int, default=1000, help="Save checkpoint every N steps")
     parser.add_argument('--eval_every', type=int, default=2000, help="Evaluate every N steps")
     parser.add_argument('--sample_every', type=int, default=100, help="Sample and log reconstructions every N steps")
-    parser.add_argument('--ckpt_saved_dir', type=str, default='ckpt', help="Directory to save outputs")
+    parser.add_argument('--ckpt_saved_dir', type=str, default='ckpt/dvae', help="Directory to save outputs")
 
     args = parser.parse_args()
 
