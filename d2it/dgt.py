@@ -131,7 +131,8 @@ class DiT(nn.Module):
 
         num_tokens = output_size * output_size
         self.num_tokens = num_tokens
-        self.spatial_tokens = nn.Parameter(torch.zeros(1, num_tokens, hidden_size)) 
+        self.hidden_size = hidden_size
+        # self.spatial_tokens = nn.Parameter(torch.zeros(1, num_tokens, hidden_size)) 
 
         # self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         # self.t_embedder = TimestepEmbedder(hidden_size)
@@ -183,26 +184,40 @@ class DiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
-
     def forward(self, y):
-        """
-        Forward pass of DiT.
-        x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
-        y: (N,) tensor of class labels
-        """
-        x = repeat(self.spatial_tokens, '1 n d -> b n d', b=y.shape[0])  # (N, T, D)
-        x = x + self.pos_embed  # (N, T, D)
-        # covnert yo to long int
+        B = y.shape[0]
+        # Instead of fixed learned spatial tokens:
+        noise = torch.randn(B, self.num_tokens, self.hidden_size, device=y.device)
+        x = noise + self.pos_embed  # inject position
+        c = self.y_embedder(y, self.training)
+        
+        for block in self.blocks:
+            x = block(x, c)
+
+        x = self.final_layer(x, c)
+        return x
+
+
+
+    # def forward(self, y):
+    #     """
+    #     Forward pass of DiT.
+    #     x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
+    #     y: (N,) tensor of class labels
+    #     """
+    #     x = repeat(self.spatial_tokens, '1 n d -> b n d', b=y.shape[0])  # (N, T, D)
+    #     x = x + self.pos_embed  # (N, T, D)
+    #     # covnert yo to long int
        
     
-        c = self.y_embedder(y, self.training)    # (N, D)
+    #     c = self.y_embedder(y, self.training)    # (N, D)
 
     
-        for block in self.blocks:
-            x = block(x, c)                      # (N, T, D)
+    #     for block in self.blocks:
+    #         x = block(x, c)                      # (N, T, D)
 
-        x = self.final_layer(x, c)              # (N, T, C*G)
-        return x
+    #     x = self.final_layer(x, c)              # (N, T, C*G)
+    #     return x
 
 
 

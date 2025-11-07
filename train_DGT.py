@@ -29,7 +29,7 @@ import logging
 
 from d2it.dataset import get_loaders 
 from d2it.loss import ce_loss as loss_fn 
-from d2it.grain_transformer import DiT_S_2
+from d2it.dgt import DiT_S_2
 
 
 
