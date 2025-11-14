@@ -3,3 +3,4 @@
 *.pyc
 /exps
 tags
+/data

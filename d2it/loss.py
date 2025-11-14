@@ -90,10 +90,28 @@ def create_dvae_loss():
 
 def ce_loss(logits, targets):
 
+    # print("logits shape:", logits.shape)
+    # print("targets shape:", targets.shape)
+    # exit()
+
+
     # Flatten logits and targets
     targets = rearrange(targets, 'b h w -> (b h w)')
     logits = rearrange(logits, 'b n c -> (b n) c')
 
+ 
+
+    # targets = rearrange(targets, 'b h w -> b (h w)')
+    # logits = rearrange(logits, 'b n c -> b c n')
+
+
+
 
     """Cross-entropy loss for classification tasks"""
     return F.cross_entropy(logits, targets)
+
+
+
+def MI_loss(z, z_hat):
+    """L_MI = E[||z - ẑ||²]"""
+    return F.mse_loss(z_hat, z)

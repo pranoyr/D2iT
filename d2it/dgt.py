@@ -16,6 +16,7 @@ import math
 from einops import rearrange, repeat
 from functools import partial
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
+from d2it.loss import ce_loss, MI_loss
 
 
 def modulate(x, shift, scale):
@@ -29,7 +30,7 @@ class LabelEmbedder(nn.Module):
     def __init__(self, num_classes, hidden_size, dropout_prob):
         super().__init__()
         use_cfg_embedding = dropout_prob > 0
-        self.embedding_table = nn.Embedding(num_classes + use_cfg_embedding, hidden_size)
+        self.embedding_table = nn.Embedding(num_classes, hidden_size)
         self.num_classes = num_classes
         self.dropout_prob = dropout_prob
 
@@ -80,6 +81,47 @@ class DiTBlock(nn.Module):
         return x
 
 
+# ------------------ Q Network ------------------
+class QNetwork(nn.Module):
+    """Predicts noise vector ẑ from hidden transformer features"""
+    def __init__(self, hidden_size, noise_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.LayerNorm(hidden_size),
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.SiLU(),
+            nn.Linear(hidden_size // 2, noise_dim)
+        )
+
+    def forward(self, x):
+        # x: [B, N, hidden_size]
+        # Global average pooling across tokens
+        # x_mean = x.mean(dim=1)  # [B, hidden_size]
+        z_hat = self.net(x)  # [B, noise_dim]
+        return z_hat
+
+
+
+
+# class FinalLayer(nn.Module):
+#     """
+#     The final layer of DiT.
+#     """
+#     def __init__(self, hidden_size, granularity=2):
+#         super().__init__()
+#         self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+#         self.linear = nn.Linear(hidden_size, granularity, bias=True)
+#         self.adaLN_modulation = nn.Sequential(
+#             nn.SiLU(),
+#             nn.Linear(hidden_size, 2 * hidden_size, bias=True)
+#         )
+
+#     def forward(self, x, c):
+#         shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
+#         x = modulate(self.norm_final(x), shift, scale)
+#         x = self.linear(x)
+#         return x
+
 
 class FinalLayer(nn.Module):
     """
@@ -89,23 +131,14 @@ class FinalLayer(nn.Module):
         super().__init__()
         self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.linear = nn.Linear(hidden_size, granularity, bias=True)
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_size, 2 * hidden_size, bias=True)
-        )
-
-    def forward(self, x, c):
-        shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
-        x = modulate(self.norm_final(x), shift, scale)
+    def forward(self, x):
+        x = self.norm_final(x)
         x = self.linear(x)
         return x
 
 
 
 class DiT(nn.Module):
-    """
-    Diffusion model with a Transformer backbone.
-    """
     def __init__(
         self,
         input_size=32,
@@ -116,7 +149,7 @@ class DiT(nn.Module):
         num_heads=16,
         mlp_ratio=4.0,
         class_dropout_prob=0.1,
-        num_classes=1000,
+        num_classes=1,
         output_size=16,
         learn_sigma=True,
     ):
@@ -127,18 +160,14 @@ class DiT(nn.Module):
         self.patch_size = patch_size
         self.num_heads = num_heads
 
-
-
         num_tokens = output_size * output_size
         self.num_tokens = num_tokens
         self.hidden_size = hidden_size
-        # self.spatial_tokens = nn.Parameter(torch.zeros(1, num_tokens, hidden_size)) 
 
-        # self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
-        # self.t_embedder = TimestepEmbedder(hidden_size)
+        # IMPORTANT: Use learnable spatial tokens instead of random noise
+        self.spatial_tokens = nn.Parameter(torch.zeros(1, num_tokens, hidden_size))
+        
         self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
-        # num_patches = self.x_embedder.num_patches
-        # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_tokens, hidden_size), requires_grad=False)
 
         self.blocks = nn.ModuleList([
@@ -149,7 +178,6 @@ class DiT(nn.Module):
         self.initialize_weights()
 
     def initialize_weights(self):
-        # Initialize transformer layers:
         def _basic_init(module):
             if isinstance(module, nn.Linear):
                 torch.nn.init.xavier_uniform_(module.weight)
@@ -157,67 +185,52 @@ class DiT(nn.Module):
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
 
-        # Initialize (and freeze) pos_embed by sin-cos embedding:
+        # Initialize pos_embed
         pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.num_tokens ** 0.5))
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
 
-        # # Initialize patch_embed like nn.Linear (instead of nn.Conv2d):
-        # w = self.x_embedder.proj.weight.data
-        # nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-        # nn.init.constant_(self.x_embedder.proj.bias, 0)
+        # IMPORTANT: Initialize learnable spatial tokens with small values
+        nn.init.trunc_normal_(self.spatial_tokens, std=0.02)
 
-        # Initialize label embedding table:
+        # Initialize label embedding
         nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
 
-        # # Initialize timestep embedding MLP:
-        # nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
-        # nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
-
-        # Zero-out adaLN modulation layers in DiT blocks:
+        # Zero-out adaLN modulation layers
         for block in self.blocks:
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
 
-        # Zero-out output layers:
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.final_layer.linear.weight, 0)
-        nn.init.constant_(self.final_layer.linear.bias, 0)
-
-    def forward(self, y):
-        B = y.shape[0]
-        # Instead of fixed learned spatial tokens:
-        noise = torch.randn(B, self.num_tokens, self.hidden_size, device=y.device)
-        x = noise + self.pos_embed  # inject position
-        c = self.y_embedder(y, self.training)
+    def forward(self, c, target=None):
+        B = c.shape[0]
         
+        # FIXED: Use learnable tokens, optionally with small noise for regularization
+        x = self.spatial_tokens.expand(B, -1, -1)  # [B, num_tokens, hidden_size]
+        
+        # Optional: Add small noise during training for regularization (much smaller than before!)
+        if self.training:
+            x = x + torch.randn_like(x) * 0.01  # Very small noise, not completely random!
+        
+        # Add positional embedding
+        x = x + self.pos_embed
+        
+        # Get class embedding
+        c = self.y_embedder(c, self.training)
+        
+        # Pass through transformer blocks
         for block in self.blocks:
             x = block(x, c)
 
-        x = self.final_layer(x, c)
-        return x
+        # Predict grain map
+        grain_map = self.final_layer(x)
 
+        # Compute loss if target is provided
+        if target is not None:
+            loss = ce_loss(grain_map, target)
+            loss_dict = {"ce_loss": loss}
+            return loss_dict
+        else:
+            return grain_map
 
-
-    # def forward(self, y):
-    #     """
-    #     Forward pass of DiT.
-    #     x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
-    #     y: (N,) tensor of class labels
-    #     """
-    #     x = repeat(self.spatial_tokens, '1 n d -> b n d', b=y.shape[0])  # (N, T, D)
-    #     x = x + self.pos_embed  # (N, T, D)
-    #     # covnert yo to long int
-       
-    
-    #     c = self.y_embedder(y, self.training)    # (N, D)
-
-    
-    #     for block in self.blocks:
-    #         x = block(x, c)                      # (N, T, D)
-
-    #     x = self.final_layer(x, c)              # (N, T, C*G)
-    #     return x
 
 
 
@@ -278,6 +291,12 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 
 def DiT_S_2(**kwargs):
     return DiT(depth=12, hidden_size=384, patch_size=2, num_heads=6, **kwargs)
+
+    
+def DiT_L_8(**kwargs):
+    return DiT(depth=24, hidden_size=1024, patch_size=8, num_heads=16, **kwargs)
+
+
 
 
 if __name__ == "__main__":

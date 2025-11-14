@@ -11,7 +11,11 @@ from torch.utils.data import DataLoader
 import pickle as pkl
 import logging
 
+import cv2
+import numpy as np
 
+
+from torchvision import datasets
 import os
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
@@ -45,24 +49,29 @@ def get_transforms(resolution=256, is_train=True):
     ops = []
     
     # Base transforms - resize and crop
+    # ops += [
+    #     T.Resize(resolution, interpolation=T.InterpolationMode.BILINEAR),
+    #     T.CenterCrop(resolution)
+    # ]
+
     ops += [
-        T.Resize(resolution, interpolation=T.InterpolationMode.BILINEAR),
-        T.CenterCrop(resolution)
+        T.Resize((resolution, resolution), interpolation=T.InterpolationMode.BILINEAR)
     ]
     
-    # Training augmentations
-    if is_train:
-        ops += [
-            T.RandomHorizontalFlip(p=0.5),
-            # Add more augmentations for better training
-            T.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05),
-            T.RandomRotation(degrees=5),
-        ]
+    # # Training augmentations
+    # if is_train:
+    #     ops += [
+    #         T.RandomHorizontalFlip(p=0.5),
+    #         # Add more augmentations for better training
+    #         T.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05),
+    #         T.RandomRotation(degrees=5),
+    #     ]
     
     # Convert to tensor and normalize to [-1, 1] range
     ops += [
         T.ToTensor(),  # [0, 1]
-        T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),  # [-1, 1]
+        # imagenet
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ]
     
     return T.Compose(ops)
@@ -327,7 +336,7 @@ class ImageNetDataset(Dataset):
         
         if self.transform:
             image = self.transform(image)
-            
+
         return image, label
 
 
@@ -387,6 +396,71 @@ def get_imagenet_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True,
     return train_loader, val_loader
 
 
+def get_STL_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True, transform=None):
+    """
+    Create ImageNet data loaders for training and validation
+    
+    Args:
+        train_dataset: Training dataset
+        val_dataset: Validation dataset
+        batch_size: Batch size for data loaders
+        num_workers: Number of worker processes for data loading
+        pin_memory: Whether to pin memory for faster GPU transfer
+
+    Returns:
+        tuple: (train_loader, val_loader)
+    """
+
+
+    DatasetClass =  ImageNetDataset 
+    
+    if transform is not None:
+        train_transform = transform
+    else: 
+        train_transform = get_transforms(resolution=224, is_train=True)
+
+
+    # Load STL-10
+    train_ds = datasets.STL10(
+        root=root_dir,
+        split='train',
+        download=True,
+        transform=train_transform
+    )
+
+    if transform is not None:
+        test_transform = transform
+    else: 
+        test_transform = get_transforms(resolution=224, is_train=False)
+
+    val_ds = datasets.STL10(
+        root=root_dir,
+        split='test',
+        download=True,
+        transform=test_transform
+    )
+
+    train_loader = DataLoader(
+        train_ds, 
+        batch_size=batch_size,  # Paper uses 256
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+        persistent_workers=num_workers > 0
+    )
+
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+        persistent_workers=num_workers > 0
+    )
+
+    return train_loader, val_loader
 
 
 class ImageFolderDataset(Dataset):
@@ -409,6 +483,9 @@ class ImageFolderDataset(Dataset):
             if file.lower().endswith(extensions)
         ]
 
+        # # number of samples  = 1
+        # self.image_paths = self.image_paths[:100]
+
         if not self.image_paths:
             raise RuntimeError(f"No images found in {root_dir} with extensions {extensions}")
 
@@ -424,6 +501,7 @@ class ImageFolderDataset(Dataset):
         grain_map = pkl_file['grain_map']
         label = pkl_file['label']
         labels = torch.tensor(label)
+        
         # convert to long int
         return torch.tensor(grain_map).long(), label
 
@@ -449,28 +527,44 @@ def get_loaders(root_dir, batch_size=8, num_workers=4, pin_memory=True):
     return train_dl, None
 
 
-# train_dl = get_loaders("/media/pranoy/Datasets/ILSVRC/grain_maps", batch_size=4, num_workers=2)
 
-# for grain_map, label in train_dl:
+
+# train_dl = get_loaders("./data/grain_maps", batch_size=1, num_workers=0)[0]
+# for batch in train_dl:
+#     grain_map, label = batch
 #     print(grain_map.shape, label)
-#     break
+
+
+
+#     # permute and conver to numpy
+#     # grain_map_np = grain_map.permute(1,2,0).numpy()
+#     # print(grain_map_np.shape)
+#     # exit()
+
+#     grain_map_np = (grain_map.cpu().numpy() * 255).astype(np.uint8)
+#     print(grain_map_np.shape)
+#     cv2.imwrite("grain_map.jpg", grain_map_np[0])
+#     # cv2.imshow("grain_map", grain_map_np)
+#     # cv2.waitKey(0)
+#     exit()
+
+ 
 
 
 
 
 # # Create datasets
 # train_dataset = ImageNetDataset(
-#     root_dir="/media/pranoy/Datasets/ILSVRC/Data/CLS-LOC/train",
-#     csv_file="/media/pranoy/Datasets/ILSVRC/LOC_train_solution.csv",
-#     transform=train_transform
+#     root_dir="/media/pranoy/Datasets/ILSVRC",
 # )
 
-# val_dataset = ImageNetDataset(
-#     root_dir="/media/pranoy/Datasets/ILSVRC/Data/CLS-LOC/val",
-#     csv_file="/media/pranoy/Datasets/ILSVRC/LOC_val_solution.csv",
-#     transform=val_transform
-# )
 
+
+
+# for i  in range(len(train_dataset)):
+#     img, label = train_dataset[i]
+#     print(label)
+    
 
 
 

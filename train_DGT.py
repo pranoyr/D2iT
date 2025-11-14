@@ -8,6 +8,7 @@ from tqdm import tqdm
 # import constant_learnign rate swith warm up
 import logging
 import math
+import cv2
 
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 import os
@@ -28,8 +29,7 @@ import logging
 
 
 from d2it.dataset import get_loaders 
-from d2it.loss import ce_loss as loss_fn 
-from d2it.dgt import DiT_S_2
+from d2it.dgt import DiT_S_2, DiT_L_8
 
 
 
@@ -165,10 +165,10 @@ def train(args):
 
 
     # training parameters
-    optim = torch.optim.Adam(
+    optim = torch.optim.AdamW(
         model.parameters(),
         lr=args.lr,
-        betas=(0.0, 0.99),
+        betas=(0.9, 0.999),
         weight_decay=0.0
     )
     steps_per_epoch = math.ceil(len(train_dl) / args.gradient_accumulation_steps)
@@ -181,10 +181,12 @@ def train(args):
     #     )
 
 
-    scheduler = get_constant_schedule_with_warmup(
-            optim,
-            num_warmup_steps=args.warmup_steps
-        )
+    # scheduler = get_constant_schedule_with_warmup(
+    #         optim,
+    #         num_warmup_steps=args.warmup_steps
+    #     )
+
+    scheduler = None
       
 
     # prepare model, optimizer, and dataloader for distributed training
@@ -209,6 +211,7 @@ def train(args):
     logging.info(f"Effective Total training steps: {effective_training_steps}")
 
     start_epoch = global_step // effective_training_steps
+    # start_epoch = 0
 
     model.train()
     for epoch in range(start_epoch, args.num_epochs):
@@ -216,6 +219,7 @@ def train(args):
             for batch in train_dl:
                 grain_map, labels = batch
 
+                        
                 # =========================
                 # GENERATOR TRAINING STEP
                 # =========================
@@ -224,29 +228,29 @@ def train(args):
                     optim.zero_grad(set_to_none=True)
                     
                     with accelerator.autocast():
-                        preds = model(labels)
-                        loss = loss_fn(preds, grain_map)
-                        
+                        loss_dict = model(labels, target=grain_map)
+                        loss = loss_dict['ce_loss'] 
+
                     accelerator.backward(loss)
                     
                     if accelerator.sync_gradients and args.max_grad_norm:
                         accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                     
                     optim.step()	
-                    scheduler.step()
+                    # scheduler.step()
 
             
                 # =========================
                 # LOGGING AND CHECKPOINTING
                 # =========================
                 if accelerator.sync_gradients:
-                    if not (global_step % args.ckpt_every) and accelerator.is_main_process:
-                        save_ckpt(accelerator,
-                                  model,
-                                  optim,
-                                  scheduler,
-                                  global_step,
-                                  os.path.join(args.ckpt_saved_dir, f'{wandb.run.name}-step-{global_step}.pth'))
+                    # if not (global_step % args.ckpt_every) and accelerator.is_main_process:
+                    #     save_ckpt(accelerator,
+                    #               model,
+                    #               optim,
+                    #               scheduler,
+                    #               global_step,
+                    #               os.path.join(args.ckpt_saved_dir, f'{wandb.run.name}-step-{global_step}.pth'))
                     
 
                     # if not (global_step % args.eval_every):
@@ -261,7 +265,9 @@ def train(args):
                     
                     # Prepare logging
                     log_dict = {
-                        "train_loss": loss.item(), 
+                        "total_loss": loss.item(),
+                        "ce_loss": loss_dict['ce_loss'].item(),
+                        # "mi_loss": loss_dict['mi_loss'].item(),
                         "lr": optim.param_groups[0]['lr']
                     }
                     
@@ -280,18 +286,18 @@ if __name__ == "__main__":
 
     # project / dataset
     parser.add_argument('--project_name', type=str, default='Grain Transformer')
-    parser.add_argument('--root', type=str, default='/media/pranoy/Datasets/ILSVRC/grain_maps',help="Path to dataset")
+    parser.add_argument('--root', type=str, default='data/grain_maps_1_class',help="Path to dataset")
     parser.add_argument('--resume', type=str, default=None, help="Path to checkpoint to resume from")
-    parser.add_argument('--batch_size', type=int, default=32, help="Batch size per device")
+    parser.add_argument('--batch_size', type=int, default=8, help="Batch size per device")
     parser.add_argument('--num_workers', type=int, default=4, help="Number of data loader workers")
 
     # training hyperparameters
-    parser.add_argument('--lr', type=float, default=1e-3  , help="Learning rate")
-    parser.add_argument('--num_epochs', type=int, default=10, help="Number of training epochs")
+    parser.add_argument('--lr', type=float, default=1e-4 , help="Learning rate")
+    parser.add_argument('--num_epochs', type=int, default=100, help="Number of training epochs")
     parser.add_argument('--warmup_steps', type=int, default=1000, help="LR warmup steps")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help="Max gradient norm for clipping")
-    parser.add_argument('--mixed_precision', type=str, default='fp16', choices=['no', 'fp16', 'bf16'], help="Mixed precision training mode")
+    parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'], help="Mixed precision training mode")
 
 
     # logging / checkpointing
