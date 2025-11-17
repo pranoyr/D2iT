@@ -484,7 +484,7 @@ class ImageFolderDataset(Dataset):
         ]
 
         # # number of samples  = 1
-        # self.image_paths = self.image_paths[:100]
+        self.image_paths = self.image_paths[:10000]
 
         if not self.image_paths:
             raise RuntimeError(f"No images found in {root_dir} with extensions {extensions}")

@@ -149,7 +149,7 @@ class DiT(nn.Module):
         num_heads=16,
         mlp_ratio=4.0,
         class_dropout_prob=0.1,
-        num_classes=1,
+        num_classes=1000,
         output_size=16,
         learn_sigma=True,
     ):
@@ -206,9 +206,11 @@ class DiT(nn.Module):
         # FIXED: Use learnable tokens, optionally with small noise for regularization
         x = self.spatial_tokens.expand(B, -1, -1)  # [B, num_tokens, hidden_size]
         
-        # Optional: Add small noise during training for regularization (much smaller than before!)
-        if self.training:
-            x = x + torch.randn_like(x) * 0.01  # Very small noise, not completely random!
+        # # Optional: Add small noise during training for regularization (much smaller than before!)
+        # if self.training:
+        #     x = x + torch.randn_like(x) * 0.01  # Very small noise, not completely random!
+
+        # # x = torch.randn(B, self.num_tokens, self.hidden_size, device=c.device)
         
         # Add positional embedding
         x = x + self.pos_embed

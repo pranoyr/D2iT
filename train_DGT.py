@@ -174,11 +174,11 @@ def train(args):
     steps_per_epoch = math.ceil(len(train_dl) / args.gradient_accumulation_steps)
     num_training_steps = args.num_epochs * steps_per_epoch
    
-    # scheduler = get_cosine_schedule_with_warmup(
-    #         optim,
-    #         num_warmup_steps=args.warmup_steps,
-    #         num_training_steps=num_training_steps
-    #     )
+    scheduler = get_cosine_schedule_with_warmup(
+            optim,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=num_training_steps
+        )
 
 
     # scheduler = get_constant_schedule_with_warmup(
@@ -186,7 +186,7 @@ def train(args):
     #         num_warmup_steps=args.warmup_steps
     #     )
 
-    scheduler = None
+    # scheduler = None
       
 
     # prepare model, optimizer, and dataloader for distributed training
@@ -219,6 +219,14 @@ def train(args):
             for batch in train_dl:
                 grain_map, labels = batch
 
+
+                # print("Grain map shape:", grain_map.shape)
+                # print("Labels shape:", labels.shape)
+
+                # print(labels)
+                # print(grain_map)
+                # exit()
+
                         
                 # =========================
                 # GENERATOR TRAINING STEP
@@ -237,7 +245,8 @@ def train(args):
                         accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                     
                     optim.step()	
-                    # scheduler.step()
+                    if scheduler is not None:
+                        scheduler.step()
 
             
                 # =========================
@@ -286,7 +295,7 @@ if __name__ == "__main__":
 
     # project / dataset
     parser.add_argument('--project_name', type=str, default='Grain Transformer')
-    parser.add_argument('--root', type=str, default='data/grain_maps_1_class',help="Path to dataset")
+    parser.add_argument('--root', type=str, default='/media/pranoy/Datasets/ILSVRC/grain_maps',help="Path to dataset")
     parser.add_argument('--resume', type=str, default=None, help="Path to checkpoint to resume from")
     parser.add_argument('--batch_size', type=int, default=8, help="Batch size per device")
     parser.add_argument('--num_workers', type=int, default=4, help="Number of data loader workers")
