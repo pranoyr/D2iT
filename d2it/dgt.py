@@ -137,101 +137,244 @@ class FinalLayer(nn.Module):
         return x
 
 
-
 class DiT(nn.Module):
     def __init__(
         self,
-        input_size=32,
-        patch_size=2,
-        in_channels=4,
-        hidden_size=1152,
-        depth=28,
-        num_heads=16,
-        mlp_ratio=4.0,
-        class_dropout_prob=0.1,
+        hidden_size=384,
         num_classes=1000,
-        output_size=16,
-        learn_sigma=True,
+        num_tokens=256,
+        depth=12,
+        num_heads=6,
+        latent_dim=64,  # Dimension of noise vector
+        **kwargs
     ):
         super().__init__()
-        self.learn_sigma = learn_sigma
-        self.in_channels = in_channels
-        self.out_channels = in_channels * 2 if learn_sigma else in_channels
-        self.patch_size = patch_size
-        self.num_heads = num_heads
-
-        num_tokens = output_size * output_size
+        
         self.num_tokens = num_tokens
         self.hidden_size = hidden_size
-
-        # IMPORTANT: Use learnable spatial tokens instead of random noise
+        self.latent_dim = latent_dim
+        
+        # Learnable spatial tokens (base)
         self.spatial_tokens = nn.Parameter(torch.zeros(1, num_tokens, hidden_size))
         
-        self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
+        # Class-specific noise distribution parameters
+        self.class_noise_mean = nn.Embedding(num_classes, latent_dim)
+        self.class_noise_logvar = nn.Embedding(num_classes, latent_dim)
+        
+        # Project noise to spatial tokens
+        self.noise_to_spatial = nn.Linear(latent_dim, num_tokens * hidden_size)
+        
+        # Standard components
+        self.y_embedder = LabelEmbedder(num_classes, hidden_size, dropout_prob=0.1)
         self.pos_embed = nn.Parameter(torch.zeros(1, num_tokens, hidden_size), requires_grad=False)
-
+        
         self.blocks = nn.ModuleList([
-            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
+            DiTBlock(hidden_size, num_heads, mlp_ratio=4.0) for _ in range(depth)
         ])
         self.final_layer = FinalLayer(hidden_size, granularity=2)
-
+        
         self.initialize_weights()
-
+    
     def initialize_weights(self):
-        def _basic_init(module):
-            if isinstance(module, nn.Linear):
-                torch.nn.init.xavier_uniform_(module.weight)
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
-        self.apply(_basic_init)
-
-        # Initialize pos_embed
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.num_tokens ** 0.5))
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
-
-        # IMPORTANT: Initialize learnable spatial tokens with small values
+        # Initialize base spatial tokens
         nn.init.trunc_normal_(self.spatial_tokens, std=0.02)
-
-        # Initialize label embedding
-        nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
-
-        # Zero-out adaLN modulation layers
-        for block in self.blocks:
-            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
-            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
-
+        
+        # Initialize class noise distributions
+        nn.init.normal_(self.class_noise_mean.weight, mean=0.0, std=0.01)
+        nn.init.constant_(self.class_noise_logvar.weight, 0.0)  # Start with low variance
+        
+        # Initialize noise projection
+        nn.init.xavier_uniform_(self.noise_to_spatial.weight)
+        nn.init.constant_(self.noise_to_spatial.bias, 0)
+        
+        # ... rest of initialization
+    
+    def sample_class_noise(self, class_ids):
+        """
+        Sample noise from class-specific distribution
+        
+        Args:
+            class_ids: [B] tensor of class indices
+            
+        Returns:
+            noise: [B, latent_dim] sampled noise
+        """
+        # Get class-specific distribution parameters
+        mean = self.class_noise_mean(class_ids)      # [B, latent_dim]
+        logvar = self.class_noise_logvar(class_ids)  # [B, latent_dim]
+        
+        # Reparameterization trick: z = μ + σ * ε, where ε ~ N(0,1)
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        noise = mean + eps * std
+        
+        return noise, mean, logvar
+    
     def forward(self, c, target=None):
+        """
+        Args:
+            c: [B] class labels
+            target: [B, H, W] ground truth grain maps (optional)
+        """
         B = c.shape[0]
         
-        # FIXED: Use learnable tokens, optionally with small noise for regularization
+        # Start with base spatial tokens
         x = self.spatial_tokens.expand(B, -1, -1)  # [B, num_tokens, hidden_size]
         
-        # # Optional: Add small noise during training for regularization (much smaller than before!)
-        # if self.training:
-        #     x = x + torch.randn_like(x) * 0.01  # Very small noise, not completely random!
-
-        # # x = torch.randn(B, self.num_tokens, self.hidden_size, device=c.device)
+        # Sample class-conditional noise
+        if self.training:
+            # During training: sample from learned distribution
+            noise, noise_mean, noise_logvar = self.sample_class_noise(c)
+        else:
+            # During inference: can sample or use mean
+            noise, noise_mean, noise_logvar = self.sample_class_noise(c)
+            # Or use deterministic mean: noise = noise_mean
+        
+        # Project noise to spatial pattern
+        noise_spatial = self.noise_to_spatial(noise)  # [B, num_tokens * hidden_size]
+        noise_spatial = noise_spatial.view(B, self.num_tokens, self.hidden_size)
+        
+        # Add noise pattern to base tokens
+        x = x + noise_spatial * 0.1  # Scale factor to control influence
         
         # Add positional embedding
         x = x + self.pos_embed
         
         # Get class embedding
-        c = self.y_embedder(c, self.training)
+        c_embed = self.y_embedder(c, self.training)
         
         # Pass through transformer blocks
         for block in self.blocks:
-            x = block(x, c)
-
+            x = block(x, c_embed)
+        
         # Predict grain map
         grain_map = self.final_layer(x)
-
+        
         # Compute loss if target is provided
         if target is not None:
-            loss = ce_loss(grain_map, target)
-            loss_dict = {"ce_loss": loss}
-            return loss_dict
+            # Cross-entropy loss for grain map prediction
+            ce_loss_val = ce_loss(grain_map, target)
+            
+            # Optional: KL divergence to regularize noise distribution
+            # Encourages learned distributions to stay close to N(0,1)
+            kl_loss = -0.5 * torch.sum(1 + noise_logvar - noise_mean.pow(2) - noise_logvar.exp())
+            kl_loss = kl_loss / B  # Normalize by batch size
+            
+            total_loss = ce_loss_val + 0.001 * kl_loss  # Small weight for KL
+            
+            return {
+                "ce_loss": ce_loss_val,
+                "kl_loss": kl_loss,
+                "total_loss": total_loss
+            }
         else:
             return grain_map
+
+# class DiT(nn.Module):
+#     def __init__(
+#         self,
+#         input_size=32,
+#         patch_size=2,
+#         in_channels=4,
+#         hidden_size=1152,
+#         depth=28,
+#         num_heads=16,
+#         mlp_ratio=4.0,
+#         class_dropout_prob=0.1,
+#         num_classes=1000,
+#         output_size=16,
+#         learn_sigma=True,
+#     ):
+#         super().__init__()
+#         self.learn_sigma = learn_sigma
+#         self.in_channels = in_channels
+#         self.out_channels = in_channels * 2 if learn_sigma else in_channels
+#         self.patch_size = patch_size
+#         self.num_heads = num_heads
+
+#         num_tokens = output_size * output_size
+#         self.num_tokens = num_tokens
+#         self.hidden_size = hidden_size
+
+#         # IMPORTANT: Use learnable spatial tokens instead of random noise
+#         self.spatial_tokens = nn.Parameter(torch.zeros(1, num_tokens, hidden_size))
+        
+#         self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
+#         self.pos_embed = nn.Parameter(torch.zeros(1, num_tokens, hidden_size), requires_grad=False)
+
+#         self.blocks = nn.ModuleList([
+#             DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
+#         ])
+#         self.final_layer = FinalLayer(hidden_size, granularity=2)
+
+#         self.initialize_weights()
+
+#     def initialize_weights(self):
+#         def _basic_init(module):
+#             if isinstance(module, nn.Linear):
+#                 torch.nn.init.xavier_uniform_(module.weight)
+#                 if module.bias is not None:
+#                     nn.init.constant_(module.bias, 0)
+#         self.apply(_basic_init)
+
+#         # Initialize pos_embed
+#         pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.num_tokens ** 0.5))
+#         self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+
+#         # IMPORTANT: Initialize learnable spatial tokens with small values
+#         nn.init.trunc_normal_(self.spatial_tokens, std=0.02)
+
+#         # Initialize label embedding
+#         nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
+
+#         # Zero-out adaLN modulation layers
+#         for block in self.blocks:
+#             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+#             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+#     def forward(self, c, target=None):
+#         B = c.shape[0]
+        
+#         # FIXED: Use learnable tokens, optionally with small noise for regularization
+#         # x = self.spatial_tokens.expand(B, -1, -1)  # [B, num_tokens, hidden_size]
+
+#         x = repeat(self.spatial_tokens, '1 n d -> b n d', b=B)
+        
+#         # # Optional: Add small noise during training for regularization (much smaller than before!)
+#         # if self.training:
+#         #     x = x + torch.randn_like(x) * 0.01  # Very small noise, not completely random!
+
+#         # # x = torch.randn(B, self.num_tokens, self.hidden_size, device=c.device)
+
+#         # Get class embedding
+#         c = self.y_embedder(c, self.training)
+
+#         print(x.shape)
+#         print(c.shape)
+#         exit()
+
+#         x = x + c
+
+        
+#         # Add positional embedding
+#         x = x + self.pos_embed
+        
+        
+        
+#         # Pass through transformer blocks
+#         for block in self.blocks:
+#             x = block(x, c)
+
+#         # Predict grain map
+#         grain_map = self.final_layer(x)
+
+#         # Compute loss if target is provided
+#         if target is not None:
+#             loss = ce_loss(grain_map, target)
+#             loss_dict = {"ce_loss": loss}
+#             return loss_dict
+#         else:
+#             return grain_map
 
 
 

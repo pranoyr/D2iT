@@ -174,11 +174,11 @@ def train(args):
     steps_per_epoch = math.ceil(len(train_dl) / args.gradient_accumulation_steps)
     num_training_steps = args.num_epochs * steps_per_epoch
    
-    scheduler = get_cosine_schedule_with_warmup(
-            optim,
-            num_warmup_steps=args.warmup_steps,
-            num_training_steps=num_training_steps
-        )
+    # scheduler = get_cosine_schedule_with_warmup(
+    #         optim,
+    #         num_warmup_steps=args.warmup_steps,
+    #         num_training_steps=num_training_steps
+    #     )
 
 
     # scheduler = get_constant_schedule_with_warmup(
@@ -186,7 +186,7 @@ def train(args):
     #         num_warmup_steps=args.warmup_steps
     #     )
 
-    # scheduler = None
+    scheduler = None
       
 
     # prepare model, optimizer, and dataloader for distributed training
