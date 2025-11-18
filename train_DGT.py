@@ -237,7 +237,7 @@ def train(args):
                     
                     with accelerator.autocast():
                         loss_dict = model(labels, target=grain_map)
-                        loss = loss_dict['ce_loss'] 
+                        loss = sum(loss_dict.get(f"{k}_weight", 1.0) * loss_dict[k] for k in loss_dict if 'weight' not in k)
 
                     accelerator.backward(loss)
                     
@@ -274,13 +274,18 @@ def train(args):
                     
                     # Prepare logging
                     log_dict = {
-                        "total_loss": loss.item(),
-                        "ce_loss": loss_dict['ce_loss'].item(),
-                        # "mi_loss": loss_dict['mi_loss'].item(),
-                        "lr": optim.param_groups[0]['lr']
+                        "lr": optim.param_groups[0]['lr'],
                     }
+
+                    # Loop over loss_dict and add all losses
+                    for key, value in loss_dict.items():
+                        if 'weight' not in key:  # Skip weight entries
+                            log_dict[key] = value.item() if torch.is_tensor(value) else value
                     
-                    
+                    # add total also
+                    log_dict["total_loss"] = loss.item()
+
+
                     accelerator.log(log_dict, step=global_step)
                     global_step += 1
 
