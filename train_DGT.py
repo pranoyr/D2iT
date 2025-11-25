@@ -29,7 +29,7 @@ import logging
 
 
 from d2it.dataset import get_loaders 
-from d2it.dgt import DiT_S_2, DiT_L_8
+from d2it.dgt import DynamicGrainTransformer
 
 
 
@@ -155,7 +155,7 @@ def train(args):
     # set device
     device = accelerator.device
     # model
-    model = DiT_S_2()
+    model = DynamicGrainTransformer()
     # Train loders
     train_dl, val_dl = get_loaders(
         root_dir=args.root,
@@ -236,7 +236,7 @@ def train(args):
                     optim.zero_grad(set_to_none=True)
                     
                     with accelerator.autocast():
-                        loss_dict = model(labels, target=grain_map)
+                        loss_dict = model(grain_map, labels)
                         loss = sum(loss_dict.get(f"{k}_weight", 1.0) * loss_dict[k] for k in loss_dict if 'weight' not in k)
 
                     accelerator.backward(loss)
